@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cobra Command Tree Builder</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #tree { border: 1px solid #ccc; height: 400px; }
+        .node { cursor: pointer; }
+        .node circle { fill: #fff; stroke: steelblue; stroke-width: 3px; }
+        .node text { font: 12px sans-serif; }
+        .link { fill: none; stroke: #ccc; stroke-width: 2px; }
+        form { margin-top: 20px; }
+        input, button { margin: 5px; padding: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Cobra Command Tree Builder</h1>
+    <div id="tree"></div>
+    <form id="commandForm">
+        <input type="text" id="cmdName" placeholder="Command Name" required>
+        <input type="text" id="cmdUse" placeholder="Use" required>
+        <input type="text" id="cmdShort" placeholder="Short Description">
+        <button type="button" onclick="addCommand()">Add Command</button>
+        <button type="button" onclick="addFlag()">Add Flag</button>
+        <button type="button" onclick="generateCode()">Generate Go Code</button>
+    </form>
+    <div id="flagForm" style="display:none;">
+        <input type="text" id="flagName" placeholder="Flag Name">
+        <input type="text" id="flagType" placeholder="Flag Type (string, bool, int)">
+        <input type="text" id="flagDesc" placeholder="Description">
+        <button type="button" onclick="saveFlag()">Save Flag</button>
+    </div>
+    <pre id="codeOutput"></pre>
+    <script src="app.js"></script>
+</body>
+</html>

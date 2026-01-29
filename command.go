@@ -14,6 +14,69 @@
 
 // Package cobra is a commander providing a simple interface to create powerful modern CLI interfaces.
 // In addition to providing an interface, Cobra simultaneously provides a controller to organize your application code.
+
+// launchWizard launches the interactive wizard for building commands.
+func launchWizard(c *Command, initialArgs []string) []string {
+	// Placeholder: implement wizard using bubbletea
+	return initialArgs
+}
+
+// executePipeline executes a pipeline of commands with type safety.
+func executePipeline(root *Command, allArgs []string) (*Command, error) {
+	fullCmd := strings.Join(allArgs, " ")
+	parts := strings.Split(fullCmd, "|")
+	cmds := make([]*Command, 0, len(parts))
+	cmdArgLists := make([][]string, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		partArgs := strings.Fields(part)
+		cmd, remainingArgs, err := root.Find(partArgs)
+		if err != nil {
+			return nil, err
+		}
+		cmds = append(cmds, cmd)
+		// remainingArgs are flags, but for simplicity, pass all partArgs as args
+		cmdArgLists = append(cmdArgLists, partArgs)
+	}
+
+	// Check type safety
+	for i := 1; i < len(cmds); i++ {
+		if cmds[i-1].OutputType != "" && cmds[i].InputType != "" && cmds[i-1].OutputType != cmds[i].InputType {
+			return nil, fmt.Errorf("pipeline type mismatch: command %s outputs %s but command %s expects %s",
+				cmds[i-1].Name(), cmds[i-1].OutputType, cmds[i].Name(), cmds[i].InputType)
+		}
+	}
+
+	// Execute pipeline
+	var input interface{}
+	var lastCmd *Command
+	for i, cmd := range cmds {
+		args := cmdArgLists[i]
+		var output interface{}
+		var err error
+		if cmd.PipelineRunE != nil {
+			output, err = cmd.PipelineRunE(cmd, args, input)
+		} else {
+			// Fallback to normal RunE, ignoring input/output
+			if cmd.RunE != nil {
+				err = cmd.RunE(cmd, args)
+			} else if cmd.Run != nil {
+				cmd.Run(cmd, args)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		input = output
+		lastCmd = cmd
+	}
+
+	return lastCmd, nil
+}
 package cobra
 
 import (
@@ -26,6 +89,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	flag "github.com/spf13/pflag"
 )
@@ -65,6 +130,10 @@ type Command struct {
 
 	// Aliases is an array of aliases that can be used instead of the first word in Use.
 	Aliases []string
+
+	// I18nAliases is a map of language codes to arrays of aliases for internationalization.
+	// E.g., {"es": ["ayuda"], "fr": ["aide"]}
+	I18nAliases map[string][]string
 
 	// SuggestFor is an array of command names for which this command will be suggested -
 	// similar to aliases but only suggests.
@@ -257,6 +326,24 @@ type Command struct {
 	// SuggestionsMinimumDistance defines minimum levenshtein distance to display suggestions.
 	// Must be > 0.
 	SuggestionsMinimumDistance int
+
+	// AISuggestionsFunc is an optional function that provides AI-powered suggestions for unknown commands.
+	// It takes the typed command name and returns a list of suggested corrections or completions.
+	AISuggestionsFunc func(typedName string) []string
+
+	// Middlewares are functions executed before the command's Run function.
+	// They can be used for logging, authentication, etc.
+	Middlewares []func(cmd *Command, args []string) error
+
+	// InputType and OutputType for pipeline type safety
+	InputType  string
+	OutputType string
+
+	// PipelineRunE is used for pipeline execution, taking input and returning output.
+	PipelineRunE func(cmd *Command, args []string, input interface{}) (interface{}, error)
+
+	// Version specifies the version of this command for versioning and migration support.
+	Version string
 }
 
 // Context returns underlying command context. If command was executed
@@ -861,21 +948,32 @@ func (c *Command) Traverse(args []string) (*Command, []string, error) {
 
 // SuggestionsFor provides suggestions for the typedName.
 func (c *Command) SuggestionsFor(typedName string) []string {
-	suggestions := []string{}
+	suggestionMap := make(map[string]bool)
 	for _, cmd := range c.commands {
 		if cmd.IsAvailableCommand() {
 			levenshteinDistance := ld(typedName, cmd.Name(), true)
 			suggestByLevenshtein := levenshteinDistance <= c.SuggestionsMinimumDistance
 			suggestByPrefix := strings.HasPrefix(strings.ToLower(cmd.Name()), strings.ToLower(typedName))
 			if suggestByLevenshtein || suggestByPrefix {
-				suggestions = append(suggestions, cmd.Name())
+				suggestionMap[cmd.Name()] = true
 			}
 			for _, explicitSuggestion := range cmd.SuggestFor {
 				if strings.EqualFold(typedName, explicitSuggestion) {
-					suggestions = append(suggestions, cmd.Name())
+					suggestionMap[cmd.Name()] = true
 				}
 			}
 		}
+	}
+	// Add AI-powered suggestions if function is provided
+	if c.AISuggestionsFunc != nil {
+		aiSuggestions := c.AISuggestionsFunc(typedName)
+		for _, s := range aiSuggestions {
+			suggestionMap[s] = true
+		}
+	}
+	suggestions := make([]string, 0, len(suggestionMap))
+	for s := range suggestionMap {
+		suggestions = append(suggestions, s)
 	}
 	return suggestions
 }
@@ -1011,10 +1109,24 @@ func (c *Command) execute(a []string) (err error) {
 		return err
 	}
 
-	if c.RunE != nil {
-		if err := c.RunE(c, argWoFlags); err != nil {
+	// Register command version
+	if GlobalVersionManager != nil && c.Version != "" {
+		if err := GlobalVersionManager.RegisterCommand(c, c.Version); err != nil {
+			return fmt.Errorf("version registration failed: %v", err)
+		}
+	}
+
+	// Run global middlewares (from root)
+	for _, mw := range c.Root().Middlewares {
+		if err := mw(c, argWoFlags); err != nil {
 			return err
 		}
+	}
+
+	if c.PipelineRunE != nil {
+		_, err = c.PipelineRunE(c, argWoFlags, nil)
+	} else if c.RunE != nil {
+		err = c.RunE(c, argWoFlags)
 	} else {
 		c.Run(c, argWoFlags)
 	}
@@ -1115,6 +1227,41 @@ func (c *Command) ExecuteC() (cmd *Command, err error) {
 	// Now that all commands have been created, let's make sure all groups
 	// are properly created also
 	c.checkCommandGroups()
+
+	// Load plugins
+	LoadPlugins(c)
+
+	// Add built-in commands
+	c.AddCommand(CreateStatsCommand())
+	c.AddCommand(CreateTemplateCommand())
+	c.AddCommand(CreateTestCommand())
+	c.AddCommand(CreateWebBuilderCommand())
+	c.AddCommand(CreateDistributedCommand())
+	c.AddCommand(CreateVersioningCommand())
+
+	// Check for --wizard flag
+	wizard := false
+	var wizardArgs []string
+	for i, arg := range args {
+		if arg == "--wizard" {
+			wizard = true
+			wizardArgs = append(args[:i], args[i+1:]...)
+			break
+		}
+	}
+	if wizard {
+		builtArgs := launchWizard(c, wizardArgs)
+		if builtArgs != nil {
+			args = builtArgs
+		} else {
+			return nil, nil
+		}
+	}
+
+	// Check for pipeline
+	if strings.Contains(strings.Join(args, " "), "|") {
+		return executePipeline(c, args)
+	}
 
 	var flags []string
 	if c.TraverseChildren {
@@ -1554,7 +1701,24 @@ func (c *Command) HasAlias(s string) bool {
 			return true
 		}
 	}
+	// Check i18n aliases
+	lang := getCurrentLang()
+	if aliases, ok := c.I18nAliases[lang]; ok {
+		for _, a := range aliases {
+			if commandNameMatches(a, s) {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+func getCurrentLang() string {
+	lang := os.Getenv("LANG")
+	if lang == "" {
+		return "en"
+	}
+	return strings.Split(lang, "_")[0]
 }
 
 // CalledAs returns the command name or alias that was used to invoke

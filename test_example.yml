@@ -1,0 +1,26 @@
+tests:
+- name: "test help command"
+  command: "cli"
+  args: ["help"]
+  expect_exit: 0
+  expect_output: "Available Commands"
+
+- name: "test template list"
+  command: "cli"
+  args: ["template", "list"]
+  expect_exit: 0
+
+- name: "test with environment"
+  command: "echo"
+  args: ["$TEST_VAR"]
+  env:
+    TEST_VAR: "test_value"
+  expect_output: "test_value"
+
+- name: "test with mock"
+  command: "mycommand"
+  expect_output: "mocked output"
+  mocks:
+    mycommand: |
+      #!/bin/sh
+      echo "mocked output"

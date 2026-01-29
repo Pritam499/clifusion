@@ -522,6 +522,16 @@ func (c *Command) getCompletions(args []string) (*Command, []Completion, ShellCo
 						directive = ShellCompDirectiveNoFileComp
 					}
 				}
+
+				// Add recent commands
+				if GlobalAnalyticsDB != nil {
+					recents, err := GlobalAnalyticsDB.GetRecentCommands(toComplete, 5)
+					if err == nil {
+						for _, recent := range recents {
+							completions = append(completions, CompletionWithDesc(recent, "recently used"))
+						}
+					}
+				}
 			}
 
 			// Complete required flags even without the '-' prefix

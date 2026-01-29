@@ -1435,7 +1435,20 @@ func TestSuggestions(t *testing.T) {
 		SuggestFor: []string{"counts"},
 		Run:        emptyRun,
 	}
+	serverCmd := &Command{
+		Use: "server",
+		Run: emptyRun,
+	}
 	rootCmd.AddCommand(timesCmd)
+	rootCmd.AddCommand(serverCmd)
+
+	// Set AI suggestions function
+	rootCmd.AISuggestionsFunc = func(typedName string) []string {
+		if typedName == "sever" {
+			return []string{"server"}
+		}
+		return nil
+	}
 
 	templateWithSuggestions := "Error: unknown command \"%s\" for \"root\"\n\nDid you mean this?\n\t%s\n\nRun 'root --help' for usage.\n"
 	templateWithoutSuggestions := "Error: unknown command \"%s\" for \"root\"\nRun 'root --help' for usage.\n"
@@ -1453,6 +1466,7 @@ func TestSuggestions(t *testing.T) {
 		"timezone": "",
 		"foo":      "",
 		"counts":   "times",
+		"sever":    "server",
 	}
 
 	for typo, suggestion := range tests {
