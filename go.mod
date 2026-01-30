@@ -12,7 +12,7 @@ require (
 	github.com/gizak/termui/v3 v3.0.0
 	github.com/inconshreveable/mousetrap v1.1.0
 	github.com/mattn/go-sqlite3 v1.14.22
-	github.com/spf13/pflag v1.0.9
+	github.com/spf13/pflag v1.0.10
 	github.com/yuin/gopher-lua v1.1.1
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/crypto v0.17.0
