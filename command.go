@@ -327,10 +327,6 @@ type Command struct {
 	// Must be > 0.
 	SuggestionsMinimumDistance int
 
-	// AISuggestionsFunc is an optional function that provides AI-powered suggestions for unknown commands.
-	// It takes the typed command name and returns a list of suggested corrections or completions.
-	AISuggestionsFunc func(typedName string) []string
-
 	// Middlewares are functions executed before the command's Run function.
 	// They can be used for logging, authentication, etc.
 	Middlewares []func(cmd *Command, args []string) error
@@ -948,34 +944,66 @@ func (c *Command) Traverse(args []string) (*Command, []string, error) {
 
 // SuggestionsFor provides suggestions for the typedName.
 func (c *Command) SuggestionsFor(typedName string) []string {
-	suggestionMap := make(map[string]bool)
+	type suggestion struct {
+		name     string
+		distance int
+		usage    int
+	}
+	var suggestions []suggestion
 	for _, cmd := range c.commands {
 		if cmd.IsAvailableCommand() {
 			levenshteinDistance := ld(typedName, cmd.Name(), true)
 			suggestByLevenshtein := levenshteinDistance <= c.SuggestionsMinimumDistance
 			suggestByPrefix := strings.HasPrefix(strings.ToLower(cmd.Name()), strings.ToLower(typedName))
 			if suggestByLevenshtein || suggestByPrefix {
-				suggestionMap[cmd.Name()] = true
+				fullPath := c.CommandPath() + " " + cmd.Name()
+				usageCount := 0
+				if GlobalAnalyticsDB != nil {
+					stats, err := GlobalAnalyticsDB.GetUsageStats()
+					if err == nil {
+						for _, stat := range stats {
+							if stat["command"].(string) == fullPath {
+								usageCount = stat["count"].(int)
+								break
+							}
+						}
+					}
+				}
+				suggestions = append(suggestions, suggestion{name: cmd.Name(), distance: levenshteinDistance, usage: usageCount})
 			}
 			for _, explicitSuggestion := range cmd.SuggestFor {
 				if strings.EqualFold(typedName, explicitSuggestion) {
-					suggestionMap[cmd.Name()] = true
+					fullPath := c.CommandPath() + " " + cmd.Name()
+					usageCount := 0
+					if GlobalAnalyticsDB != nil {
+						stats, err := GlobalAnalyticsDB.GetUsageStats()
+						if err == nil {
+							for _, stat := range stats {
+								if stat["command"].(string) == fullPath {
+									usageCount = stat["count"].(int)
+									break
+								}
+							}
+						}
+					}
+					suggestions = append(suggestions, suggestion{name: cmd.Name(), distance: 0, usage: usageCount})
 				}
 			}
 		}
 	}
-	// Add AI-powered suggestions if function is provided
-	if c.AISuggestionsFunc != nil {
-		aiSuggestions := c.AISuggestionsFunc(typedName)
-		for _, s := range aiSuggestions {
-			suggestionMap[s] = true
+	// Sort by usage descending, then distance ascending
+	for i := 0; i < len(suggestions)-1; i++ {
+		for j := i + 1; j < len(suggestions); j++ {
+			if suggestions[i].usage < suggestions[j].usage || (suggestions[i].usage == suggestions[j].usage && suggestions[i].distance > suggestions[j].distance) {
+				suggestions[i], suggestions[j] = suggestions[j], suggestions[i]
+			}
 		}
 	}
-	suggestions := make([]string, 0, len(suggestionMap))
-	for s := range suggestionMap {
-		suggestions = append(suggestions, s)
+	result := make([]string, 0, len(suggestions))
+	for _, s := range suggestions {
+		result = append(result, s.name)
 	}
-	return suggestions
+	return result
 }
 
 // VisitParents visits all parents of the command and invokes fn on each parent.
@@ -1003,6 +1031,27 @@ func (c *Command) ArgsLenAtDash() int {
 func (c *Command) execute(a []string) (err error) {
 	if c == nil {
 		return fmt.Errorf("called Execute() on a nil Command")
+	}
+
+	// Record command usage
+	var usage *CommandUsage
+	if GlobalAnalyticsDB != nil {
+		usage = &CommandUsage{
+			CommandPath: c.CommandPath(),
+			Args:        fmt.Sprintf("%v", a),
+			StartTime:   time.Now(),
+		}
+		defer func() {
+			if usage != nil {
+				usage.EndTime = time.Now()
+				usage.Duration = usage.EndTime.Sub(usage.StartTime)
+				usage.Success = err == nil
+				if err != nil {
+					usage.ErrorMsg = err.Error()
+				}
+				GlobalAnalyticsDB.RecordUsage(usage)
+			}
+		}()
 	}
 
 	if len(c.Deprecated) > 0 {

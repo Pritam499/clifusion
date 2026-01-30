@@ -31,6 +31,9 @@ var globalRootCmd *Command
 
 type Plugin interface {
 	Init(rootCmd *Command) error
+	AddCommands(rootCmd *Command) error
+	ModifyCommands(rootCmd *Command) error
+	AddMiddlewares(rootCmd *Command) error
 }
 
 func LoadPlugins(rootCmd *Command) error {
@@ -84,6 +87,8 @@ func loadGoPlugin(path string, rootCmd *Command) error {
 	return initFunc(rootCmd)
 }
 
+// For plugins, they can implement the Plugin interface or just Init
+
 func loadLuaPlugin(path string, rootCmd *Command) error {
 	L := lua.NewState()
 	defer L.Close()
@@ -109,12 +114,63 @@ func loadLuaPlugin(path string, rootCmd *Command) error {
 		return 0
 	}))
 
+	L.SetGlobal("find_command", L.NewFunction(func(L *lua.LState) int {
+		name := L.ToString(1)
+		cmd := findCommandByName(rootCmd, name)
+		if cmd != nil {
+			// Push command table or something, but for now, just name
+			L.Push(lua.LString(cmd.Use))
+		} else {
+			L.Push(lua.LNil)
+		}
+		return 1
+	}))
+
+	L.SetGlobal("add_middleware", L.NewFunction(func(L *lua.LState) int {
+		cmdName := L.ToString(1)
+		middleware := L.ToFunction(2)
+		cmd := findCommandByName(rootCmd, cmdName)
+		if cmd != nil {
+			cmd.Middlewares = append(cmd.Middlewares, func(c *Command, args []string) error {
+				L.Push(middleware)
+				for _, arg := range args {
+					L.Push(lua.LString(arg))
+				}
+				return L.PCall(len(args), 0, nil)
+			})
+		}
+		return 0
+	}))
+
+	L.SetGlobal("modify_command", L.NewFunction(func(L *lua.LState) int {
+		name := L.ToString(1)
+		newShort := L.ToString(2)
+		cmd := findCommandByName(rootCmd, name)
+		if cmd != nil {
+			cmd.Short = newShort
+			// Can add more modifications
+		}
+		return 0
+	}))
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 
 	return L.DoString(string(content))
+}
+
+func findCommandByName(root *Command, name string) *Command {
+	if root.Use == name || root.Name() == name {
+		return root
+	}
+	for _, sub := range root.commands {
+		if found := findCommandByName(sub, name); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 func startPluginWatcher() {

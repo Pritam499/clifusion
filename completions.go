@@ -517,7 +517,11 @@ func (c *Command) getCompletions(args []string) (*Command, []Completion, ShellCo
 				for _, subCmd := range finalCmd.Commands() {
 					if subCmd.IsAvailableCommand() || subCmd == finalCmd.helpCommand {
 						if strings.HasPrefix(subCmd.Name(), toComplete) {
-							completions = append(completions, CompletionWithDesc(subCmd.Name(), subCmd.Short))
+							desc := subCmd.Short
+							if subCmd.HasExample() {
+								desc += " (examples: " + strings.ReplaceAll(subCmd.Example, "\n", "; ") + ")"
+							}
+							completions = append(completions, CompletionWithDesc(subCmd.Name(), desc))
 						}
 						directive = ShellCompDirectiveNoFileComp
 					}
