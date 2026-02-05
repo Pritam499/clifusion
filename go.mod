@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/cpuguy83/go-md2man/v2 v2.0.6
-	github.com/fsnotify/fsnotify v1.7.0
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gizak/termui/v3 v3.0.0
 	github.com/inconshreveable/mousetrap v1.1.0
 	github.com/mattn/go-sqlite3 v1.14.22
